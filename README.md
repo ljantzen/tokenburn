@@ -60,18 +60,66 @@ Press `q` or `Esc` to exit the TUI.
 
 ## Statusline integration
 
-`tokenburn collect` reads the `rate_limits` JSON that Claude Code already emits to its statusline, saves it to SQLite, and passes stdin through unchanged. This avoids hitting the API on every statusline tick.
+Claude Code calls your `statusLine` command after each assistant response, piping a JSON blob that includes rate limit data. `tokenburn collect` reads that JSON, saves the usage snapshot to SQLite, and passes stdin through to stdout unchanged — so your existing statusline keeps working and the history DB grows automatically without any extra API calls.
+
+### Basic setup
+
+If you don't have an existing statusline command, set `tokenburn collect` directly:
 
 ```json
 // ~/.claude/settings.json
 {
   "statusLine": {
+    "type": "command",
+    "command": "tokenburn collect"
+  }
+}
+```
+
+With no other consumer of the output this just silently records usage in the background. Run `tokenburn` at any time to see the chart with historical data.
+
+### With an existing statusline command
+
+Because `tokenburn collect` passes stdin through to stdout unchanged, you can insert it anywhere in a pipeline:
+
+```json
+{
+  "statusLine": {
+    "type": "command",
     "command": "tokenburn collect | your-existing-statusline-command"
   }
 }
 ```
 
-`tokenburn collect` passes the original JSON through unchanged, so your existing statusline keeps working.
+### Displaying compact output in your shell prompt
+
+To also show live usage in your terminal prompt, pipe collect's output into `tokenburn --compact`:
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "tokenburn collect | tokenburn --compact"
+  }
+}
+```
+
+This prints a single line like `Session: 🔥 45% (2h14m) · Weekly: 🧊 12%` that your shell prompt or tmux statusline can pick up.
+
+### Multi-profile
+
+If you run multiple Claude Code profiles via `CLAUDE_CONFIG_DIR`, each profile gets its own isolated database. Set the env var in the command so tokenburn writes to the right place:
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "CLAUDE_CONFIG_DIR=~/.claude-work tokenburn collect"
+  }
+}
+```
+
+History is stored at `~/.tokenburn-work/history.db` (derived from the config dir name).
 
 ## Data storage
 
