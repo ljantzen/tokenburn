@@ -103,6 +103,11 @@ fn fetch_or_cache(client: &UsageClient, db: &mut HistoryDB) -> Result<UsageSnaps
     }
 }
 
+#[cfg(test)]
+pub(crate) fn auto_detect_limit_pub(snap: &UsageSnapshot) -> LimitType {
+    auto_detect_limit(snap)
+}
+
 fn auto_detect_limit(snap: &UsageSnapshot) -> LimitType {
     if snap.session.is_some() {
         LimitType::Session
@@ -162,23 +167,36 @@ fn run_tui(
     let interval_ms = config.interval * 1000;
 
     // Background polling thread
+    let poll_secs = config.poll_interval as f64;
     thread::spawn(move || {
         let mut last_poll = Instant::now() - Duration::from_millis(poll_ms);
         loop {
             thread::sleep(Duration::from_secs(1));
             if last_poll.elapsed().as_millis() >= poll_ms as u128 {
-                match client.fetch_usage() {
-                    Ok(snap) => {
-                        let snaps = db
-                            .get_snapshots_for_limit(limit_type, None)
-                            .unwrap_or_default();
-                        let _ = db.save_snapshot(&snap);
-                        let mut state = arc_clone.lock().unwrap();
-                        *state = (snap, snaps, None);
-                    }
-                    Err(e) => {
-                        let mut state = arc_clone.lock().unwrap();
-                        state.2 = Some(e.to_string());
+                // Use DB data if collect has written something fresh enough
+                let db_age = db.get_latest_snapshot_age_seconds();
+                if db_age.is_some_and(|age| age < poll_secs)
+                    && let Ok(Some(snap)) = db.get_latest_snapshot()
+                {
+                    let snaps = db
+                        .get_snapshots_for_limit(limit_type, None)
+                        .unwrap_or_default();
+                    let mut state = arc_clone.lock().unwrap();
+                    *state = (snap, snaps, None);
+                } else {
+                    match client.fetch_usage() {
+                        Ok(snap) => {
+                            let snaps = db
+                                .get_snapshots_for_limit(limit_type, None)
+                                .unwrap_or_default();
+                            let _ = db.save_snapshot(&snap);
+                            let mut state = arc_clone.lock().unwrap();
+                            *state = (snap, snaps, None);
+                        }
+                        Err(e) => {
+                            let mut state = arc_clone.lock().unwrap();
+                            state.2 = Some(e.to_string());
+                        }
                     }
                 }
                 last_poll = Instant::now();
@@ -312,4 +330,76 @@ fn print_json(snap: &UsageSnapshot, snapshots: &[UsageSnapshot], limit_type: Lim
         "{}",
         serde_json::to_string_pretty(&output).unwrap_or_default()
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{LimitData, LimitType, MonthlyLimitData, UsageSnapshot};
+    use chrono::{Duration, Utc};
+
+    fn empty_snap() -> UsageSnapshot {
+        UsageSnapshot {
+            timestamp: Utc::now(),
+            session: None,
+            weekly: None,
+            weekly_sonnet: None,
+            weekly_opus: None,
+            monthly: None,
+            raw_response: None,
+        }
+    }
+
+    fn limit_data(lt: LimitType) -> LimitData {
+        LimitData {
+            utilization: 0.5,
+            resets_at: Utc::now() + Duration::hours(3),
+            limit_type: lt,
+        }
+    }
+
+    #[test]
+    fn auto_detect_prefers_session() {
+        let mut snap = empty_snap();
+        snap.session = Some(limit_data(LimitType::Session));
+        snap.monthly = Some(MonthlyLimitData {
+            monthly_limit_cents: 10000,
+            used_credits_cents: 1000.0,
+            utilization: 0.1,
+            resets_at: Utc::now() + Duration::hours(24 * 20),
+        });
+        assert_eq!(auto_detect_limit_pub(&snap), LimitType::Session);
+    }
+
+    #[test]
+    fn auto_detect_falls_back_to_monthly() {
+        let mut snap = empty_snap();
+        snap.monthly = Some(MonthlyLimitData {
+            monthly_limit_cents: 10000,
+            used_credits_cents: 1000.0,
+            utilization: 0.1,
+            resets_at: Utc::now() + Duration::hours(24 * 20),
+        });
+        assert_eq!(auto_detect_limit_pub(&snap), LimitType::Monthly);
+    }
+
+    #[test]
+    fn auto_detect_falls_back_to_weekly() {
+        let mut snap = empty_snap();
+        snap.weekly = Some(limit_data(LimitType::Weekly));
+        assert_eq!(auto_detect_limit_pub(&snap), LimitType::Weekly);
+    }
+
+    #[test]
+    fn auto_detect_defaults_to_session_when_empty() {
+        assert_eq!(auto_detect_limit_pub(&empty_snap()), LimitType::Session);
+    }
+
+    #[test]
+    fn auto_detect_session_takes_priority_over_weekly() {
+        let mut snap = empty_snap();
+        snap.session = Some(limit_data(LimitType::Session));
+        snap.weekly = Some(limit_data(LimitType::Weekly));
+        assert_eq!(auto_detect_limit_pub(&snap), LimitType::Session);
+    }
 }

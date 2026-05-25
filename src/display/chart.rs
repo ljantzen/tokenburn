@@ -228,3 +228,159 @@ pub fn make_ratatui_chart<'a>(data: &'a ChartData, _height: u16) -> Chart<'a> {
                 .style(Style::default().fg(Color::DarkGray)),
         )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{AnyLimit, LimitData, LimitType, UsageSnapshot};
+    use chrono::Duration;
+    use ratatui::style::Color;
+
+    fn session_limit(utilization: f64, resets_in_hours: i64) -> AnyLimit {
+        AnyLimit::Limit(LimitData {
+            utilization,
+            resets_at: Utc::now() + Duration::hours(resets_in_hours),
+            limit_type: LimitType::Session,
+        })
+    }
+
+    fn make_snapshot(util: f64, hours_ago: i64, resets_in: i64) -> UsageSnapshot {
+        UsageSnapshot {
+            timestamp: Utc::now() - Duration::hours(hours_ago),
+            session: Some(LimitData {
+                utilization: util,
+                resets_at: Utc::now() + Duration::hours(resets_in),
+                limit_type: LimitType::Session,
+            }),
+            weekly: None,
+            weekly_sonnet: None,
+            weekly_opus: None,
+            monthly: None,
+            raw_response: None,
+        }
+    }
+
+    #[test]
+    fn budget_pace_has_50_points() {
+        let limit = session_limit(0.3, 3);
+        let data = build_chart_data(&limit, &[], 0.0);
+        assert_eq!(data.budget_pace_points.len(), 50);
+    }
+
+    #[test]
+    fn budget_pace_starts_at_zero_and_ends_at_100() {
+        let limit = session_limit(0.3, 3);
+        let data = build_chart_data(&limit, &[], 0.0);
+        let first_y = data.budget_pace_points.first().unwrap().1;
+        let last_y = data.budget_pace_points.last().unwrap().1;
+        assert!(first_y < 5.0, "pace should start near 0, got {first_y}");
+        assert!(
+            (last_y - 100.0).abs() < 1.0,
+            "pace should end at 100, got {last_y}"
+        );
+    }
+
+    #[test]
+    fn display_hours_matches_window() {
+        let limit = session_limit(0.5, 2); // 3h into 5h window
+        let data = build_chart_data(&limit, &[], 0.0);
+        assert!((data.display_hours - 5.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn x_labels_has_five_entries() {
+        let limit = session_limit(0.3, 3);
+        let data = build_chart_data(&limit, &[], 0.0);
+        assert_eq!(data.x_labels.len(), 5);
+    }
+
+    #[test]
+    fn y_range_within_bounds() {
+        let limit = session_limit(0.5, 2);
+        let snaps = vec![make_snapshot(0.3, 3, 2), make_snapshot(0.5, 1, 2)];
+        let data = build_chart_data(&limit, &snaps, 5.0);
+        assert!(data.y_min >= 0.0, "y_min should be >= 0");
+        assert!(data.y_max <= 100.0, "y_max should be <= 100");
+        assert!(data.y_min < data.y_max, "y_min must be < y_max");
+    }
+
+    #[test]
+    fn no_snapshots_gives_empty_usage_points() {
+        let limit = session_limit(0.3, 3);
+        let data = build_chart_data(&limit, &[], 0.0);
+        assert!(data.usage_points.is_empty());
+    }
+
+    #[test]
+    fn snapshots_outside_window_excluded_from_usage_points() {
+        let limit = session_limit(0.3, 3);
+        // snapshot 10 hours ago is outside the 5h session window
+        let snaps = vec![make_snapshot(0.1, 10, 3)];
+        let data = build_chart_data(&limit, &snaps, 0.0);
+        assert!(data.usage_points.is_empty());
+    }
+
+    #[test]
+    fn snapshots_inside_window_included_in_usage_points() {
+        let limit = session_limit(0.3, 3);
+        let snaps = vec![make_snapshot(0.3, 1, 3), make_snapshot(0.2, 2, 3)];
+        let data = build_chart_data(&limit, &snaps, 0.0);
+        assert!(!data.usage_points.is_empty());
+        for (_, y) in &data.usage_points {
+            assert!(*y >= 0.0 && *y <= 100.0);
+        }
+    }
+
+    #[test]
+    fn over_100_utilization_excluded_from_usage_points() {
+        let limit = session_limit(0.5, 2);
+        let mut snap = make_snapshot(0.5, 1, 2);
+        snap.session.as_mut().unwrap().utilization = 1.5;
+        let data = build_chart_data(&limit, &[snap], 5.0);
+        assert!(data.usage_points.is_empty());
+    }
+
+    #[test]
+    fn projection_is_light_red_when_burn_exceeds_window() {
+        // 50% used, 2h left, burn rate 30%/h → hits 100% in ~1.7h (within window)
+        let limit = session_limit(0.5, 2);
+        let data = build_chart_data(&limit, &[], 30.0);
+        assert!(!data.projection_points.is_empty());
+        assert_eq!(data.proj_color, Color::LightRed);
+    }
+
+    #[test]
+    fn projection_is_light_green_when_burn_stays_within_window() {
+        // 10% used, 4h left, burn rate 1%/h → only reaches 14% by end
+        let limit = session_limit(0.1, 4);
+        let data = build_chart_data(&limit, &[], 1.0);
+        assert!(!data.projection_points.is_empty());
+        assert_eq!(data.proj_color, Color::LightGreen);
+    }
+
+    #[test]
+    fn no_projection_when_burn_rate_is_zero() {
+        let limit = session_limit(0.3, 3);
+        let data = build_chart_data(&limit, &[], 0.0);
+        assert!(data.projection_points.is_empty());
+    }
+
+    #[test]
+    fn no_projection_when_already_full() {
+        let limit = session_limit(1.0, 2);
+        let data = build_chart_data(&limit, &[], 10.0);
+        assert!(data.projection_points.is_empty());
+    }
+
+    #[test]
+    fn now_line_present_mid_window() {
+        // 2h into 5h window → now is within [0, display_hours]
+        let limit = session_limit(0.4, 3);
+        let data = build_chart_data(&limit, &[], 0.0);
+        assert!(!data.now_line.is_empty());
+        // All points share the same x (the "now" column)
+        let xs: Vec<f64> = data.now_line.iter().map(|(x, _)| *x).collect();
+        let first_x = xs[0];
+        assert!(xs.iter().all(|&x| (x - first_x).abs() < 0.001));
+    }
+}
