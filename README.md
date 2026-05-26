@@ -28,6 +28,16 @@ cargo build --release
 # binary at target/release/tokenburn
 ```
 
+### macOS Setup
+
+If you download a pre-built binary on macOS, you may see "Cannot open because the developer cannot be verified." Run this once to allow execution:
+
+```sh
+xattr -d com.apple.quarantine ./tokenburn
+```
+
+Then you can run the binary normally.
+
 Requires Claude Code to be installed and logged in (`claude`) before first use.
 
 ## Usage
