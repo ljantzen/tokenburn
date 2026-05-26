@@ -8,6 +8,7 @@ pub fn render_compact(
     session: Option<&LimitData>,
     weekly: Option<&LimitData>,
     weekly_sonnet: Option<&LimitData>,
+    weekly_opus: Option<&LimitData>,
     monthly: Option<&MonthlyLimitData>,
 ) -> String {
     let mut parts = Vec::new();
@@ -37,6 +38,13 @@ pub fn render_compact(
         let icon = pace_icon(ws.effective_utilization(), pace);
         let util = (ws.effective_utilization() * 100.0) as u64;
         parts.push(format!("Sonnet: {icon} {util}%"));
+    }
+
+    if let Some(wo) = weekly_opus {
+        let pace = calculate_budget_pace(wo.resets_at, wo.window_hours());
+        let icon = pace_icon(wo.effective_utilization(), pace);
+        let util = (wo.effective_utilization() * 100.0) as u64;
+        parts.push(format!("Opus: {icon} {util}%"));
     }
 
     if let Some(m) = monthly {
@@ -83,6 +91,14 @@ mod tests {
         }
     }
 
+    fn opus(util: f64) -> LimitData {
+        LimitData {
+            utilization: util,
+            resets_at: Utc::now() + Duration::hours(100),
+            limit_type: LimitType::Weekly,
+        }
+    }
+
     fn monthly(limit_cents: i64, used_cents: f64, util: f64) -> MonthlyLimitData {
         MonthlyLimitData {
             monthly_limit_cents: limit_cents,
@@ -94,12 +110,12 @@ mod tests {
 
     #[test]
     fn all_none_returns_placeholder() {
-        assert_eq!(render_compact(None, None, None, None), "No data available");
+        assert_eq!(render_compact(None, None, None, None, None), "No data available");
     }
 
     #[test]
     fn session_only_includes_percentage_and_time() {
-        let out = render_compact(Some(&session(0.45)), None, None, None);
+        let out = render_compact(Some(&session(0.45)), None, None, None, None);
         assert!(out.starts_with("Session:"), "got: {out}");
         assert!(out.contains("45%"), "got: {out}");
         assert!(out.contains('('), "should have time remaining: {out}");
@@ -107,14 +123,14 @@ mod tests {
 
     #[test]
     fn weekly_only_format() {
-        let out = render_compact(None, Some(&weekly(0.12)), None, None);
+        let out = render_compact(None, Some(&weekly(0.12)), None, None, None);
         assert!(out.starts_with("Weekly:"), "got: {out}");
         assert!(out.contains("12%"), "got: {out}");
     }
 
     #[test]
     fn parts_joined_with_dot_separator() {
-        let out = render_compact(Some(&session(0.3)), Some(&weekly(0.1)), None, None);
+        let out = render_compact(Some(&session(0.3)), Some(&weekly(0.1)), None, None, None);
         assert!(
             out.contains(" · "),
             "parts should be separated by ' · ', got: {out}"
@@ -127,6 +143,7 @@ mod tests {
             Some(&session(0.4)),
             Some(&weekly(0.1)),
             Some(&sonnet(0.05)),
+            None,
             Some(&monthly(30000, 7475.0, 0.25)),
         );
         assert!(out.contains("Session:"), "got: {out}");
@@ -143,7 +160,7 @@ mod tests {
             resets_at: Utc::now() - Duration::hours(1),
             limit_type: LimitType::Session,
         };
-        let out = render_compact(Some(&expired), None, None, None);
+        let out = render_compact(Some(&expired), None, None, None, None);
         assert!(
             out.contains("0%"),
             "expired session should show 0%, got: {out}"
@@ -152,12 +169,19 @@ mod tests {
 
     #[test]
     fn monthly_shows_dollar_amount() {
-        let out = render_compact(None, None, None, Some(&monthly(30000, 7475.0, 0.25)));
+        let out = render_compact(None, None, None, None, Some(&monthly(30000, 7475.0, 0.25)));
         assert!(out.contains("Monthly:"), "got: {out}");
         assert!(
             out.contains("$74.75"),
             "should format credits in dollars, got: {out}"
         );
+    }
+
+    #[test]
+    fn opus_weekly_displays() {
+        let out = render_compact(None, None, None, Some(&opus(0.08)), None);
+        assert!(out.contains("Opus:"), "got: {out}");
+        assert!(out.contains("8%"), "got: {out}");
     }
 
     #[test]
@@ -169,7 +193,7 @@ mod tests {
             resets_at: Utc::now() + Duration::minutes(1), // nearly expired → pace ~1.0
             limit_type: LimitType::Session,
         };
-        let out = render_compact(Some(&under), None, None, None);
+        let out = render_compact(Some(&under), None, None, None, None);
         assert!(
             out.contains("🧊"),
             "under-budget should show 🧊, got: {out}"

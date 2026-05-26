@@ -64,6 +64,7 @@ pub fn run(config: AppConfig) -> Result<()> {
                 snapshot.session.as_ref(),
                 snapshot.weekly.as_ref(),
                 snapshot.weekly_sonnet.as_ref(),
+                snapshot.weekly_opus.as_ref(),
                 snapshot.monthly.as_ref(),
             )
         );
