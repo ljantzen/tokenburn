@@ -1,5 +1,7 @@
 # tokenburn
 
+<img src="tokenburn.svg" alt="tokenburn logo" width="200">
+
 Watch your Claude Code tokens burn — before you get burned.
 
 A Rust port of [ccburn](https://github.com/JuanjoFuchs/ccburn). TUI with burn-up charts, compact mode for status bars, JSON for automation.
