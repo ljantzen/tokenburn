@@ -146,6 +146,8 @@ To also show live usage in your terminal prompt, pipe collect's output into `tok
 
 This prints a single line like `Session: 🔥 45% (2h14m) · Weekly: 🧊 12%` that your shell prompt or tmux statusline can pick up.
 
+<img src="tokenburn-status.png" alt="tokenburn statusline integration">
+
 ### Multi-profile
 
 If you run multiple Claude Code profiles via `CLAUDE_CONFIG_DIR`, each profile gets its own isolated database. Set the env var in the command so tokenburn writes to the right place:
