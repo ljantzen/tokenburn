@@ -38,18 +38,18 @@ pub fn build_chart_data(
     let to_hours =
         |dt: DateTime<Utc>| -> f64 { (dt - display_start).num_seconds() as f64 / 3600.0 };
 
-    // Budget pace line (50 points)
+    // Budget pace line (50 points) - burndown from 100% to 0%
     let budget_pace_points: Vec<(f64, f64)> = (0..50)
         .map(|i| {
             let x = i as f64 * display_hours / 49.0;
             let point_time = display_start + Duration::seconds((x * 3600.0) as i64);
             let elapsed = (point_time - window_start).num_seconds() as f64 / 3600.0;
-            let y = (elapsed / window_hours * 100.0).min(100.0);
+            let y = (100.0 - (elapsed / window_hours * 100.0)).max(0.0);
             (x, y)
         })
         .collect();
 
-    // Actual usage points
+    // Actual usage points - show remaining tokens
     let limit_type = limit.limit_type();
     let usage_points: Vec<(f64, f64)> = snapshots
         .iter()
@@ -60,28 +60,28 @@ pub fn build_chart_data(
             if u > 1.0 {
                 return None;
             }
-            Some((to_hours(s.timestamp), u * 100.0))
+            Some((to_hours(s.timestamp), (1.0 - u) * 100.0))
         })
         .collect();
 
-    // Projection
-    let current_pct = limit.effective_utilization() * 100.0;
+    // Projection - show remaining tokens burning down
+    let current_remaining_pct = (1.0 - limit.effective_utilization()) * 100.0;
     let now_hours = to_hours(now);
     let remaining_window_hours = (display_end - now).num_seconds() as f64 / 3600.0;
 
-    let (projection_points, proj_color) = if burn_rate > 0.0 && current_pct < 100.0 {
-        let hours_to_100 = (100.0 - current_pct) / burn_rate;
-        if hours_to_100 <= remaining_window_hours {
-            let end_hours = now_hours + hours_to_100;
+    let (projection_points, proj_color) = if burn_rate > 0.0 && current_remaining_pct > 0.0 {
+        let hours_to_empty = current_remaining_pct / burn_rate;
+        if hours_to_empty <= remaining_window_hours {
+            let end_hours = now_hours + hours_to_empty;
             (
-                vec![(now_hours, current_pct), (end_hours, 100.0)],
+                vec![(now_hours, current_remaining_pct), (end_hours, 0.0)],
                 Color::LightRed,
             )
         } else {
             let end_hours = now_hours + remaining_window_hours;
-            let end_pct = (current_pct + burn_rate * remaining_window_hours).min(100.0);
+            let end_pct = (current_remaining_pct - burn_rate * remaining_window_hours).max(0.0);
             (
-                vec![(now_hours, current_pct), (end_hours, end_pct)],
+                vec![(now_hours, current_remaining_pct), (end_hours, end_pct)],
                 Color::LightGreen,
             )
         }
@@ -268,16 +268,13 @@ mod tests {
     }
 
     #[test]
-    fn budget_pace_starts_at_zero_and_ends_at_100() {
+    fn budget_pace_starts_at_100_and_ends_at_zero() {
         let limit = session_limit(0.3, 3);
         let data = build_chart_data(&limit, &[], 0.0);
         let first_y = data.budget_pace_points.first().unwrap().1;
         let last_y = data.budget_pace_points.last().unwrap().1;
-        assert!(first_y < 5.0, "pace should start near 0, got {first_y}");
-        assert!(
-            (last_y - 100.0).abs() < 1.0,
-            "pace should end at 100, got {last_y}"
-        );
+        assert!((first_y - 100.0).abs() < 5.0, "pace should start near 100, got {first_y}");
+        assert!(last_y < 5.0, "pace should end near 0, got {last_y}");
     }
 
     #[test]
