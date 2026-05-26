@@ -40,7 +40,35 @@ xattr -d com.apple.quarantine ./tokenburn
 
 Then you can run the binary normally.
 
-Requires Claude Code to be installed and logged in (`claude`) before first use.
+### Prerequisites
+
+Requires Claude Code to be installed and logged in (`claude`) before first use. The `claude` CLI generates the credentials file that tokenburn reads.
+
+## Configuration
+
+### Credentials
+
+tokenburn reads Claude Code credentials from `~/.claude/.credentials.json` by default. This file is created automatically when you run `claude login`. 
+
+To use credentials from a custom location:
+
+```sh
+export CREDENTIALS_PATH=/path/to/.credentials.json
+tokenburn
+```
+
+### Environment Variables
+
+- `$HOME` — Required. Must be set for tokenburn to locate configuration and data directories. If not set, tokenburn falls back to `/tmp` which may cause issues with multi-profile setup.
+- `CLAUDE_CONFIG_DIR` — Optional. Override the default Claude config directory (`~/.claude`). Useful for multi-profile setups. Each config directory gets its own isolated tokenburn database.
+- `CREDENTIALS_PATH` — Optional. Override the default credentials file location.
+
+### Directory Structure
+
+- `~/.claude/` — Claude Code config (default, overridable with `CLAUDE_CONFIG_DIR`)
+- `~/.claude/.credentials.json` — OAuth credentials (created by `claude login`)
+- `~/.tokenburn/` — tokenburn data directory (contains SQLite history database)
+- `~/.tokenburn-<suffix>/` — when using `CLAUDE_CONFIG_DIR=~/.claude-<suffix>`, data stored here instead
 
 ## Usage
 
